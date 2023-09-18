@@ -1,3 +1,5 @@
+#![feature(try_blocks)]
+
 mod hypr;
 
 use std::collections::HashMap;
@@ -76,11 +78,17 @@ fn main() {
     if command.once { return; }
 
     // Listen
-    let mut socket = open_events().unwrap();
+    let mut socket = match open_events() {
+        Ok(s) => { s }
+        Err(e) => {
+            eprintln!("{e}");
+            exit(-1);
+        }
+    };
 
     let keywords = match &command.what {
         Type::Monitors => { MONITOR_EVENTS.as_slice() }
-        Type::Workspaces { .. } => { WORKSPACE_EVENTS.as_slice()}
+        Type::Workspaces { .. } => { WORKSPACE_EVENTS.as_slice() }
         Type::Clients { .. } => { CLIENT_EVENTS.as_slice() }
     };
 
@@ -104,7 +112,6 @@ fn main() {
                 break;
             }
         }
-
     }
 }
 
@@ -118,8 +125,7 @@ fn print_data(command: &Command, config_workspaces: &Option<Vec<WorkspaceInforma
 
     // turn to string
     let result = result.and_then(|v| {
-        if command.pretty { to_string_pretty(&v) }
-        else { to_string(&v) }
+        if command.pretty { to_string_pretty(&v) } else { to_string(&v) }
             .context("failed to serialize json")
     });
 
@@ -143,20 +149,26 @@ fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Ve
     let mut data = get_info(vec!("workspaces".into(), "monitors".into()))?;
 
     // Process monitors to retrieve shown and active workspaces
-    let mut shown_map = HashMap::new();
-    let monitors = data.get(1).unwrap();
-    for monitor in monitors.as_array().unwrap() {
-        shown_map.insert(
-            monitor.get("activeWorkspace").and_then(|p| p.get("id")).and_then(Value::as_u64).unwrap(),
-            monitor.get("focused").and_then(Value::as_bool).unwrap());
-    }
+    let shown_map: Option<HashMap<u64, bool>> = try {
+        let mut map = HashMap::new();
+
+        let monitors = data.get(1)?;
+        for monitor in monitors.as_array()? {
+            map.insert(
+                monitor.get("activeWorkspace").and_then(|p| p.get("id")).and_then(Value::as_u64)?,
+                monitor.get("focused").and_then(Value::as_bool)?);
+        }
+
+        map
+    };
+    let shown_map = shown_map.context("failure whilst reading monitors to find shown workspaces")?;
 
     let mut body = data.remove(0);
     if let Value::Array(workspaces) = &mut body {
         // Remove workspaces not on monitor
         if let Some(monitor) = &on_monitor {
             workspaces.retain(|w| {
-                w.get("monitor").and_then(Value::as_str).unwrap() == monitor
+                w.get("monitor").and_then(Value::as_str) == Some(monitor)
             })
         }
 
@@ -165,8 +177,10 @@ fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Ve
         // Add custom attributes
         for workspace in workspaces.iter_mut() {
             if let Value::Object(map) = workspace {
-                let id = map.get("id").and_then(Value::as_u64).unwrap();
-                let name = map.get("name").and_then(Value::as_str).unwrap().to_owned();
+                let info: Option<(u64, String)> = try {
+                    (map.get("id").and_then(Value::as_u64)?, map.get("name").and_then(Value::as_str)?.to_owned())
+                };
+                let (id, name) = info.context("failure whilst reading id and name of workspace")?;
 
                 map.insert("shown".into(), Value::Bool(shown_map.get(&id).is_some()));
                 map.insert("active".into(), Value::Bool(*shown_map.get(&id).unwrap_or(&false)));
@@ -187,17 +201,17 @@ fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Ve
                     !existing.contains(i) &&
                         (!on_monitor.is_some() || on_monitor == &info.monitor)
                 }).map(|(_, info)| {
-                    let mut map = serde_json::Map::new();
+                let mut map = serde_json::Map::new();
 
-                    if let Some(id) = info.id { map.insert("id".to_string(), Value::Number(id.into())); }
-                    if let Some(name) = &info.name { map.insert("name".to_string(), Value::String(name.to_owned())); }
-                    if let Some(monitor) = &info.monitor { map.insert("monitor".to_string(), Value::String(monitor.to_owned())); }
+                if let Some(id) = info.id { map.insert("id".to_string(), Value::Number(id.into())); }
+                if let Some(name) = &info.name { map.insert("name".to_string(), Value::String(name.to_owned())); }
+                if let Some(monitor) = &info.monitor { map.insert("monitor".to_string(), Value::String(monitor.to_owned())); }
 
-                    map.insert("dynamic".to_string(), Value::Bool(false));
-                    map.insert("exists".to_string(), Value::Bool(false));
+                map.insert("dynamic".to_string(), Value::Bool(false));
+                map.insert("exists".to_string(), Value::Bool(false));
 
-                    Value::Object(map)
-                }).collect());
+                Value::Object(map)
+            }).collect());
         }
 
         workspaces.sort_by(|w1, w2| {
@@ -214,40 +228,54 @@ fn prepare_clients(monitor: &Option<String>, workspace: &Option<String>) -> anyh
     let mut data = get_info(vec!("clients".into(), "monitors".into()))?;
 
     // map monitor ids to names
-    let mut monitor_names = HashMap::new();
-    let monitors = data.get(1).expect("socket one seems broken");
-    for monitor in monitors.as_array().unwrap() {
-        monitor_names.insert(monitor.get("id").unwrap().as_u64().unwrap(),
-            monitor.get("name").unwrap().as_str().unwrap().to_string());
-    }
+    let monitor_names: Option<HashMap<u64, String>> = try {
+        let mut map = HashMap::new();
+
+        let monitors = data.get(1).expect("socket one seems broken");
+        for monitor in monitors.as_array()? {
+            map.insert(monitor.get("id").and_then(Value::as_u64)?,
+                       monitor.get("name").and_then(Value::as_str)?.to_string());
+        }
+
+        map
+    };
+    let monitor_names = monitor_names.context("failure whilst reading monitor names for filtering")?;
 
     let mut body = data.remove(0);
     if let Value::Array(clients) = &mut body {
         // filter by workspace
         if let Some(workspace) = workspace {
             clients.retain(|c| {
-                let ws = c.get("workspace").unwrap();
+                let ws: Option<(&str, i64)> = try {
+                    let ws = c.get("workspace")?;
+                    (ws.get("name").and_then(Value::as_str)?, ws.get("id").and_then(Value::as_i64)?)
+                };
 
-                if let Some(name) = workspace.strip_prefix("name:") {
-                    ws.get("name").unwrap() == name
-                } else {
-                    ws.get("id").unwrap().as_i64().unwrap() == i64::from_str(workspace).unwrap()
-                }
+                if let Some((name, id)) = ws {
+                    if let Some(desired_name) = workspace.strip_prefix("name:") {
+                        desired_name == name
+                    } else {
+                        i64::from_str(workspace).map(|desired_id| desired_id == id).unwrap_or_default()
+                    }
+                } else { false }
             });
         }
 
         // associate and filter with monitors
         clients.retain_mut(|c| {
             if let Value::Object(map) = c {
-                let m = map.get("monitor").unwrap().as_i64().unwrap();
+                if let Some(m) = map.get("monitor").and_then(Value::as_i64) {
+                    if let Some(name) = monitor_names.get(&(m as u64)) {
+                        map.insert("monitor_name".to_string(), Value::String(name.clone()));
 
-                if let Some(name) = monitor_names.get(&(m as u64)) {
-                    map.insert("monitor_name".to_string(), Value::String(name.clone()));
+                        return if let Some(filter) = monitor {
+                            filter == name
+                        } else { true }
+                    }
+                }
 
-                    if let Some(filter) = monitor {
-                        filter == name
-                    } else { true }
-                } else { monitor.is_none() }
+                // still keep fails when no monitor filter is active
+                monitor.is_none()
             } else { true }
         })
     }
