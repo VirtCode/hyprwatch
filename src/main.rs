@@ -1,14 +1,16 @@
 mod hypr;
 
 use std::collections::HashMap;
+use std::process::exit;
+use std::str::FromStr;
 use anyhow::{anyhow, Context};
 use clap::{Parser, Subcommand};
-use serde_json::Value;
-use serde_json::value::Index;
+use serde_json::{to_string, to_string_pretty, Value};
 use crate::hypr::{get_config_workspaces, get_info, open_events, read_events, WorkspaceInformation};
 
 const MONITOR_EVENTS: [&str; 3] = ["focusedmon", "monitorremoved", "monitoradded"];
-const WORKSPACE_EVENTS: [&str; 7] = ["focusedmon", "monitorremoved", "monitoradded", "workspace", "createworkspace", "destroyworkspace", "moveworkspace"];
+const WORKSPACE_EVENTS: [&str; 10] = ["focusedmon", "monitorremoved", "monitoradded", "workspace", "createworkspace", "destroyworkspace", "moveworkspace", "openwindow", "closewindow", "movewindow"];
+const CLIENT_EVENTS: [&str; 7] = ["openwindow", "closewindow", "movewindow", "changefloatingmode", "fullscreen", "windowtitle", "activewindowv2"];
 
 #[derive(Parser)]
 #[clap(version, about)]
@@ -69,30 +71,25 @@ fn main() {
     } else { None };
 
     // Eventless
-    {
-        let result = match &command.what {
-            Type::Monitors => { Err(anyhow!("not yet implemented")) }
-            Type::Workspaces { monitor, .. } => { prepare_workspaces(monitor, &config_workspaces, command.pretty) }
-            Type::Clients { .. } => { Err(anyhow!("not yet implemented")) }
-        };
-
-        match result {
-            Ok(s) => { println!("{s}") }
-            Err(e) => { eprintln!("{e}") }
-        }
-    }
+    print_data(&command, &config_workspaces);
 
     if command.once { return; }
 
     // Listen
     let mut socket = open_events().unwrap();
 
+    let keywords = match &command.what {
+        Type::Monitors => { MONITOR_EVENTS.as_slice() }
+        Type::Workspaces { .. } => { WORKSPACE_EVENTS.as_slice()}
+        Type::Clients { .. } => { CLIENT_EVENTS.as_slice() }
+    };
+
     loop {
         let events = match read_events(&mut socket) {
             Ok(e) => {
                 if e.is_empty() {
                     eprintln!("hyprland event socket has closed");
-                    return;
+                    exit(-1);
                 } else { e }
             }
             Err(e) => {
@@ -101,31 +98,48 @@ fn main() {
             }
         };
 
-        let mut result = None;
-        for (name, _) in events {
-            result = match &command.what {
-                Type::Monitors => { None }
-                Type::Workspaces { monitor, .. } => {
-                    if WORKSPACE_EVENTS.contains(&name.as_str()) { Some(prepare_workspaces(&monitor, &config_workspaces, command.pretty)) } else { None }
-                }
-                Type::Clients { .. } => { None }
-            };
-
-            if result.is_some() { break; }
-        }
-
-        if let Some(result) = result {
-            match result {
-                Ok(s) => { println!("{s}") }
-                Err(e) => { eprintln!("{e}") }
+        for (s, _) in events {
+            if keywords.contains(&s.as_str()) {
+                print_data(&command, &config_workspaces);
+                break;
             }
         }
+
     }
+}
+
+fn print_data(command: &Command, config_workspaces: &Option<Vec<WorkspaceInformation>>) {
+    // retrieve data
+    let result = match &command.what {
+        Type::Monitors => { prepare_monitors() }
+        Type::Workspaces { monitor, .. } => { prepare_workspaces(monitor, config_workspaces) }
+        Type::Clients { monitor, workspace } => { prepare_clients(monitor, workspace) }
+    };
+
+    // turn to string
+    let result = result.and_then(|v| {
+        if command.pretty { to_string_pretty(&v) }
+        else { to_string(&v) }
+            .context("failed to serialize json")
+    });
+
+    // print
+    match result {
+        Ok(s) => { println!("{s}") }
+        Err(e) => { eprintln!("{e}") }
+    }
+}
+
+/// Prepares the monitor data
+fn prepare_monitors() -> anyhow::Result<Value> {
+    let mut data = get_info(vec!("monitors".into()))?;
+
+    Ok(data.pop().expect("socket one seems broken"))
 }
 
 /// Prepares the workspace data
 /// In addition to the workspaces, it will also query the monitor data to see whether the workspace is displayed and focussed
-fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Vec<WorkspaceInformation>>, pretty: bool) -> anyhow::Result<String> {
+fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Vec<WorkspaceInformation>>) -> anyhow::Result<Value> {
     let mut data = get_info(vec!("workspaces".into(), "monitors".into()))?;
 
     // Process monitors to retrieve shown and active workspaces
@@ -160,12 +174,13 @@ fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Ve
 
                 if let Some(infos) = &config_workspaces {
                     let configured = infos.iter().position(|info| info.id == Some(id) || info.name == Some(name.to_owned()));
-                    map.insert("dynamic".into(), Value::Bool(!configured.is_some()));
+                    map.insert("dynamic".into(), Value::Bool(configured.is_none()));
                     if let Some(index) = configured { existing.push(index) }
                 }
             }
         }
 
+        // add configured workspaces
         if let Some(infos) = &config_workspaces {
             workspaces.append(&mut infos.iter().enumerate()
                 .filter(|(i, info)| {
@@ -181,7 +196,7 @@ fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Ve
                     map.insert("dynamic".to_string(), Value::Bool(false));
                     map.insert("exists".to_string(), Value::Bool(false));
 
-                    Value::Object(map.into())
+                    Value::Object(map)
                 }).collect());
         }
 
@@ -191,11 +206,52 @@ fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Ve
         })
     }
 
-    if pretty {
-        serde_json::to_string_pretty(&body).context("failed to re-serialize to json")
-    } else {
-        serde_json::to_string(&body).context("failed to re-serialize to json")
+    Ok(body)
+}
+
+/// Prepares the client data
+fn prepare_clients(monitor: &Option<String>, workspace: &Option<String>) -> anyhow::Result<Value> {
+    let mut data = get_info(vec!("clients".into(), "monitors".into()))?;
+
+    // map monitor ids to names
+    let mut monitor_names = HashMap::new();
+    let monitors = data.get(1).expect("socket one seems broken");
+    for monitor in monitors.as_array().unwrap() {
+        monitor_names.insert(monitor.get("id").unwrap().as_u64().unwrap(),
+            monitor.get("name").unwrap().as_str().unwrap().to_string());
     }
 
+    let mut body = data.remove(0);
+    if let Value::Array(clients) = &mut body {
+        // filter by workspace
+        if let Some(workspace) = workspace {
+            clients.retain(|c| {
+                let ws = c.get("workspace").unwrap();
+
+                if let Some(name) = workspace.strip_prefix("name:") {
+                    ws.get("name").unwrap() == name
+                } else {
+                    ws.get("id").unwrap().as_i64().unwrap() == i64::from_str(workspace).unwrap()
+                }
+            });
+        }
+
+        // associate and filter with monitors
+        clients.retain_mut(|c| {
+            if let Value::Object(map) = c {
+                let m = map.get("monitor").unwrap().as_i64().unwrap();
+
+                if let Some(name) = monitor_names.get(&(m as u64)) {
+                    map.insert("monitor_name".to_string(), Value::String(name.clone()));
+
+                    if let Some(filter) = monitor {
+                        filter == name
+                    } else { true }
+                } else { monitor.is_none() }
+            } else { true }
+        })
+    }
+
+    Ok(body)
 }
 

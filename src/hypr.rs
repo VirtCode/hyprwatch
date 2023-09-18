@@ -1,10 +1,9 @@
-use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::str::FromStr;
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use serde_json::Value;
 
 /// Opens socket two for reading
@@ -75,22 +74,21 @@ pub fn get_config_workspaces() -> anyhow::Result<Vec<WorkspaceInformation>> {
 
     let mut infos = vec![];
     for line in definitions {
-        let attributes = line.find("=").map(|i| line[(i+1)..].trim()).context("couldn't find '=' in workspace definition")?;
+        let attributes = line.find('=').map(|i| line[(i+1)..].trim()).context("couldn't find '=' in workspace definition")?;
 
         let mut info = WorkspaceInformation::default();
         for (i, attribute) in attributes.split(',').enumerate() {
             let attribute = attribute.trim();
 
             if i == 0 {
-                if attribute.starts_with("name:") { info.name = Some(attribute[("name:".len())..].to_owned()) }
+                if attribute.starts_with("name:") { info.name = attribute.strip_prefix("name:").map(Into::into) }
                 else { info.id = Some(u64::from_str(attribute).context("id of workspace is not integer")?) }
-            } else if attribute.starts_with("monitor:") {
-                info.monitor = Some(attribute[("monitor:".len())..].to_owned())
+            } else {
+                info.monitor = attribute.strip_prefix("monitor:").map(Into::into).or(info.monitor)
             }
         }
 
         infos.push(info);
-
     }
 
     Ok(infos)
@@ -105,7 +103,7 @@ pub fn get_hypr_config() -> anyhow::Result<String> {
 
 /// Returns the path to a socket, based on its name (without . and ending) and the instance signature
 pub fn get_hypr_socket(name: &str) -> anyhow::Result<String> {
-    let instance = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").context("couldn't find instance singature, is hyprland running?")?;
+    let instance = env::var("HYPRLAND_INSTANCE_SIGNATURE").context("couldn't find instance singature, is hyprland running?")?;
 
     Ok(format!("/tmp/hypr/{instance}/.{name}.sock"))
 }
