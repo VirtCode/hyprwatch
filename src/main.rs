@@ -21,9 +21,6 @@ struct Command {
     /// What to watch
     #[clap(subcommand)]
     pub what: Type,
-    /// Run specified command on shell on change, with data in $data
-    #[clap(short, long)]
-    pub run: Option<String>,
     /// Query only once, don't listen for events
     #[clap(short, long)]
     pub once: bool,
@@ -184,11 +181,11 @@ fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Ve
 
                 map.insert("shown".into(), Value::Bool(shown_map.get(&id).is_some()));
                 map.insert("active".into(), Value::Bool(*shown_map.get(&id).unwrap_or(&false)));
-                map.insert("exists".into(), Value::Bool(true));
 
                 if let Some(infos) = &config_workspaces {
                     let configured = infos.iter().position(|info| info.id == Some(id) || info.name == Some(name.to_owned()));
                     map.insert("dynamic".into(), Value::Bool(configured.is_none()));
+                    map.insert("exists".into(), Value::Bool(true));
                     if let Some(index) = configured { existing.push(index) }
                 }
             }
@@ -266,7 +263,7 @@ fn prepare_clients(monitor: &Option<String>, workspace: &Option<String>) -> anyh
             if let Value::Object(map) = c {
                 if let Some(m) = map.get("monitor").and_then(Value::as_i64) {
                     if let Some(name) = monitor_names.get(&(m as u64)) {
-                        map.insert("monitor_name".to_string(), Value::String(name.clone()));
+                        map.insert("monitorName".to_string(), Value::String(name.clone()));
 
                         return if let Some(filter) = monitor {
                             filter == name
