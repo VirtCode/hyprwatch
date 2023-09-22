@@ -11,7 +11,7 @@ use serde_json::{to_string, to_string_pretty, Value};
 use crate::hypr::{get_config_workspaces, get_info, open_events, read_events, WorkspaceInformation};
 
 const MONITOR_EVENTS: [&str; 3] = ["focusedmon", "monitorremoved", "monitoradded"];
-const WORKSPACE_EVENTS: [&str; 10] = ["focusedmon", "monitorremoved", "monitoradded", "workspace", "createworkspace", "destroyworkspace", "moveworkspace", "openwindow", "closewindow", "movewindow"];
+const WORKSPACE_EVENTS: [&str; 11] = ["focusedmon", "monitorremoved", "monitoradded", "workspace", "createworkspace", "destroyworkspace", "moveworkspace", "openwindow", "closewindow", "movewindow", "activespecial"];
 const CLIENT_EVENTS: [&str; 7] = ["openwindow", "closewindow", "movewindow", "changefloatingmode", "fullscreen", "windowtitle", "activewindowv2"];
 
 #[derive(Parser)]
@@ -38,6 +38,11 @@ enum Type {
         /// Only watch workspaces on monitor
         #[clap(short, long)]
         monitor: Option<String>,
+
+        /// Only watch for workspaces with special status
+        #[clap(short, long)]
+        special: Option<bool>,
+
         /// Also watch workspaces, which are empty and only defined in the config
         #[clap(short, long)]
         config: bool,
@@ -116,7 +121,7 @@ fn print_data(command: &Command, config_workspaces: &Option<Vec<WorkspaceInforma
     // retrieve data
     let result = match &command.what {
         Type::Monitors => { prepare_monitors() }
-        Type::Workspaces { monitor, .. } => { prepare_workspaces(monitor, config_workspaces) }
+        Type::Workspaces { monitor, special, .. } => { prepare_workspaces(monitor, special, config_workspaces) }
         Type::Clients { monitor, workspace } => { prepare_clients(monitor, workspace) }
     };
 
@@ -142,18 +147,26 @@ fn prepare_monitors() -> anyhow::Result<Value> {
 
 /// Prepares the workspace data
 /// In addition to the workspaces, it will also query the monitor data to see whether the workspace is displayed and focussed
-fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Vec<WorkspaceInformation>>) -> anyhow::Result<Value> {
+fn prepare_workspaces(on_monitor: &Option<String>, special_status: &Option<bool>, config_workspaces: &Option<Vec<WorkspaceInformation>>) -> anyhow::Result<Value> {
     let mut data = get_info(vec!("workspaces".into(), "monitors".into()))?;
 
     // Process monitors to retrieve shown and active workspaces
-    let shown_map: Option<HashMap<u64, bool>> = try {
+    let shown_map: Option<HashMap<i64, bool>> = try {
         let mut map = HashMap::new();
 
         let monitors = data.get(1)?;
         for monitor in monitors.as_array()? {
+
+            // Special workspace
+            let special = monitor.get("specialWorkspace").and_then(|p| p.get("id")).and_then(Value::as_i64)?;
+            if special != 0 {
+                map.insert(special, true);
+            }
+
+            // Normal workspace
             map.insert(
-                monitor.get("activeWorkspace").and_then(|p| p.get("id")).and_then(Value::as_u64)?,
-                monitor.get("focused").and_then(Value::as_bool)?);
+                monitor.get("activeWorkspace").and_then(|p| p.get("id")).and_then(Value::as_i64)?,
+                special == 0 && monitor.get("focused").and_then(Value::as_bool)?);
         }
 
         map
@@ -169,13 +182,20 @@ fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Ve
             })
         }
 
+        // Remove workspaces with special status
+        if let Some(special) = &special_status {
+            workspaces.retain(|w| {
+                w.get("id").and_then(Value::as_i64).map(|i| i < 0) == Some(*special)
+            })
+        }
+
         let mut existing = vec![];
 
         // Add custom attributes
         for workspace in workspaces.iter_mut() {
             if let Value::Object(map) = workspace {
-                let info: Option<(u64, String)> = try {
-                    (map.get("id").and_then(Value::as_u64)?, map.get("name").and_then(Value::as_str)?.to_owned())
+                let info: Option<(i64, String)> = try {
+                    (map.get("id").and_then(Value::as_i64)?, map.get("name").and_then(Value::as_str)?.to_owned())
                 };
                 let (id, name) = info.context("failure whilst reading id and name of workspace")?;
 
@@ -212,8 +232,8 @@ fn prepare_workspaces(on_monitor: &Option<String>, config_workspaces: &Option<Ve
         }
 
         workspaces.sort_by(|w1, w2| {
-            w1.get("id").and_then(|v| v.as_u64()).unwrap_or(u64::MAX)
-                .cmp(&w2.get("id").and_then(|v| v.as_u64()).unwrap_or(u64::MAX))
+            w1.get("id").and_then(|v| v.as_i64()).unwrap_or(i64::MAX)
+                .cmp(&w2.get("id").and_then(|v| v.as_i64()).unwrap_or(i64::MAX))
         })
     }
 

@@ -57,7 +57,7 @@ pub fn get_info(requests: Vec<String>) -> anyhow::Result<Vec<Value>>{
 // Holds required information for a workspace defined in the config file
 #[derive(Default, Debug)]
 pub struct WorkspaceInformation {
-    pub id: Option<u64>,
+    pub id: Option<i64>,
     pub name: Option<String>,
     pub monitor: Option<String>
 }
@@ -82,7 +82,7 @@ pub fn get_config_workspaces() -> anyhow::Result<Vec<WorkspaceInformation>> {
 
             if i == 0 {
                 if attribute.starts_with("name:") { info.name = attribute.strip_prefix("name:").map(Into::into) }
-                else { info.id = Some(u64::from_str(attribute).context("id of workspace is not integer")?) }
+                else { info.id = Some(i64::from_str(attribute).context("id of workspace is not integer")?) }
             } else {
                 info.monitor = attribute.strip_prefix("monitor:").map(Into::into).or(info.monitor)
             }

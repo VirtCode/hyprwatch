@@ -30,10 +30,11 @@ The following general options are available to be specified *before* the subcomm
 For more information, refer to the help page with `--help`.
 
 ### Basic Filtering
-Currently, *hyprwatch* supports some basic filtering, based on the monitor, or when applicable, workspace of the retrieved entity. This can be done over subcommand specific options (specified *after* the subcommand). Because they are specific to the subcommand, filtering by monitor can only be done on `workspaces` and `clients`, and filtering by workspace can only be done on `clients`. The filters work like this:
+Currently, *hyprwatch* supports some basic filtering, based on the monitor, or when applicable, workspace of the retrieved entity. This can be done over subcommand specific options (specified *after* the subcommand). Because they are specific to the subcommand, filtering by monitor can only be done on `workspaces` and `clients`, and filtering by workspace can only be done on `clients`. Filtering by whether it is special can only be done on `workspaces`. The filters work like this:
 
 - `-m / --monitor <MONITOR>` - Only returns entities on the provided monitor. The `MONITOR` is the string identifier (aka name) of the monitor.
 - `-w / --workspace <WORKSPACE>` - Only returns entities on the given workspace. The `WORKSPACE` can either be a workspace ID, or `name:` followed by the workspace name.
+- `-s / --special <SPECIAL>` - Only returns special entities. The `SPECIAL` is a boolean specifying to get only specials or the opposite.
 
 ### Persistent Workspaces
 > This feature will soon be replaced by https://github.com/hyprwm/Hyprland/pull/3346
