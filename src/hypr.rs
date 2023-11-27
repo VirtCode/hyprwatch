@@ -1,8 +1,6 @@
 use std::env;
-use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::str::FromStr;
 use anyhow::Context;
 use serde_json::Value;
 
@@ -52,46 +50,6 @@ pub fn get_info(requests: Vec<String>) -> anyhow::Result<Vec<Value>>{
     response.split('\x7f')
         .map(serde_json::from_str::<Value>)
         .collect::<serde_json::Result<Vec<Value>>>().context("socket 1 did not return valid json")
-}
-
-// Holds required information for a workspace defined in the config file
-#[derive(Default, Debug)]
-pub struct WorkspaceInformation {
-    pub id: Option<i64>,
-    pub name: Option<String>,
-    pub monitor: Option<String>
-}
-
-// Reads the hyprland configured workspaces and returns a vector of information
-pub fn get_config_workspaces() -> anyhow::Result<Vec<WorkspaceInformation>> {
-    let mut file = File::open(get_hypr_config()?).context("couldn't open hyprland config")?;
-
-    let mut content = String::new();
-    file.read_to_string(&mut content).context("failed to read from hyprland config file")?;
-
-    let definitions = content.split('\n')
-        .filter(|line| line.trim().starts_with("workspace ") || line.trim().starts_with("workspace=")); // Ugly, but workspace_swipe shall not be matched
-
-    let mut infos = vec![];
-    for line in definitions {
-        let attributes = line.find('=').map(|i| line[(i+1)..].trim()).context("couldn't find '=' in workspace definition")?;
-
-        let mut info = WorkspaceInformation::default();
-        for (i, attribute) in attributes.split(',').enumerate() {
-            let attribute = attribute.trim();
-
-            if i == 0 {
-                if attribute.starts_with("name:") { info.name = attribute.strip_prefix("name:").map(Into::into) }
-                else { info.id = Some(i64::from_str(attribute).context("id of workspace is not integer")?) }
-            } else {
-                info.monitor = attribute.strip_prefix("monitor:").map(Into::into).or(info.monitor)
-            }
-        }
-
-        infos.push(info);
-    }
-
-    Ok(infos)
 }
 
 /// Returns the path to the hyprland config file

@@ -36,23 +36,12 @@ Currently, *hyprwatch* supports some basic filtering, based on the monitor, or w
 - `-w / --workspace <WORKSPACE>` - Only returns entities on the given workspace. The `WORKSPACE` can either be a workspace ID, or `name:` followed by the workspace name.
 - `-s / --special <SPECIAL>` - Only returns special entities. The `SPECIAL` is a boolean specifying to get only specials or the opposite.
 
-### Persistent Workspaces
-> This feature will soon be replaced by https://github.com/hyprwm/Hyprland/pull/3346
-
-*hyprwatch* also supports reading the workspaces in the hyprland configuration, which it will then list as empty on the `workspaces` command. This allows one to have persistent workspaces, for example when using for a bar. Note that *hyprwatch* only reads the configured workspaces on startup and does not react to changes in the config file. To enable config workspaces, use this option:
-
-- `-c / --config` - Read workspaces from the Hyprland configuration and list them.
-
-**Be aware, that because configured workspaces do not yet exist, they do not have all the data that a real workspace has.**
-
 ## Additional Attributes
 As mentioned, *hyprwatch* also adds a few new attributes to the entities, which are not included with hyprctl. These are mostly based on other data which is retrieved from socket one.
 
 On `workspaces`, the new attributes include:
 - `shown: boolean` - Is the workspace currently shown on its monitor.
 - `active: boolean` - Is the workspace not only shown but also focused.
-- With configured workspaces: `exists: boolean` - Does the workspace actually exist or is it only configured.
-- With configured workspaces: `dynamic: boolean` - Was this workspace created dynamically, or is it also defined in the config.
 
 On `clients`, the following attribute was added:
 - `monitorName: string` - Name of the monitor the client is on.

@@ -5,10 +5,10 @@ mod hypr;
 use std::collections::HashMap;
 use std::process::exit;
 use std::str::FromStr;
-use anyhow::{anyhow, Context};
+use anyhow::{Context};
 use clap::{Parser, Subcommand};
 use serde_json::{to_string, to_string_pretty, Value};
-use crate::hypr::{get_config_workspaces, get_info, open_events, read_events, WorkspaceInformation};
+use crate::hypr::{get_info, open_events, read_events};
 
 const MONITOR_EVENTS: [&str; 3] = ["focusedmon", "monitorremoved", "monitoradded"];
 const WORKSPACE_EVENTS: [&str; 11] = ["focusedmon", "monitorremoved", "monitoradded", "workspace", "createworkspace", "destroyworkspace", "moveworkspace", "openwindow", "closewindow", "movewindow", "activespecial"];
@@ -42,10 +42,6 @@ enum Type {
         /// Only watch for workspaces with special status
         #[clap(short, long)]
         special: Option<bool>,
-
-        /// Also watch workspaces, which are empty and only defined in the config
-        #[clap(short, long)]
-        config: bool,
     },
     /// Watch changes in clients (windows)
     Clients {
@@ -61,21 +57,8 @@ enum Type {
 fn main() {
     let command = Command::parse();
 
-    // Load persistent stuff if required
-    let config_workspaces = if let Type::Workspaces { config, .. } = &command.what {
-        if *config {
-            match get_config_workspaces() {
-                Ok(w) => { Some(w) }
-                Err(e) => {
-                    eprintln!("{e}");
-                    return;
-                }
-            }
-        } else { None }
-    } else { None };
-
     // Eventless
-    print_data(&command, &config_workspaces);
+    print_data(&command);
 
     if command.once { return; }
 
@@ -110,18 +93,18 @@ fn main() {
 
         for (s, _) in events {
             if keywords.contains(&s.as_str()) {
-                print_data(&command, &config_workspaces);
+                print_data(&command);
                 break;
             }
         }
     }
 }
 
-fn print_data(command: &Command, config_workspaces: &Option<Vec<WorkspaceInformation>>) {
+fn print_data(command: &Command) {
     // retrieve data
     let result = match &command.what {
         Type::Monitors => { prepare_monitors() }
-        Type::Workspaces { monitor, special, .. } => { prepare_workspaces(monitor, special, config_workspaces) }
+        Type::Workspaces { monitor, special, .. } => { prepare_workspaces(monitor, special) }
         Type::Clients { monitor, workspace } => { prepare_clients(monitor, workspace) }
     };
 
@@ -147,7 +130,7 @@ fn prepare_monitors() -> anyhow::Result<Value> {
 
 /// Prepares the workspace data
 /// In addition to the workspaces, it will also query the monitor data to see whether the workspace is displayed and focussed
-fn prepare_workspaces(on_monitor: &Option<String>, special_status: &Option<bool>, config_workspaces: &Option<Vec<WorkspaceInformation>>) -> anyhow::Result<Value> {
+fn prepare_workspaces(on_monitor: &Option<String>, special_status: &Option<bool>) -> anyhow::Result<Value> {
     let mut data = get_info(vec!("workspaces".into(), "monitors".into()))?;
 
     // Process monitors to retrieve shown and active workspaces
@@ -189,8 +172,6 @@ fn prepare_workspaces(on_monitor: &Option<String>, special_status: &Option<bool>
             })
         }
 
-        let mut existing = vec![];
-
         // Add custom attributes
         for workspace in workspaces.iter_mut() {
             if let Value::Object(map) = workspace {
@@ -201,34 +182,7 @@ fn prepare_workspaces(on_monitor: &Option<String>, special_status: &Option<bool>
 
                 map.insert("shown".into(), Value::Bool(shown_map.get(&id).is_some()));
                 map.insert("active".into(), Value::Bool(*shown_map.get(&id).unwrap_or(&false)));
-
-                if let Some(infos) = &config_workspaces {
-                    let configured = infos.iter().position(|info| info.id == Some(id) || info.name == Some(name.to_owned()));
-                    map.insert("dynamic".into(), Value::Bool(configured.is_none()));
-                    map.insert("exists".into(), Value::Bool(true));
-                    if let Some(index) = configured { existing.push(index) }
-                }
             }
-        }
-
-        // add configured workspaces
-        if let Some(infos) = &config_workspaces {
-            workspaces.append(&mut infos.iter().enumerate()
-                .filter(|(i, info)| {
-                    !existing.contains(i) &&
-                        (!on_monitor.is_some() || on_monitor == &info.monitor)
-                }).map(|(_, info)| {
-                let mut map = serde_json::Map::new();
-
-                if let Some(id) = info.id { map.insert("id".to_string(), Value::Number(id.into())); }
-                if let Some(name) = &info.name { map.insert("name".to_string(), Value::String(name.to_owned())); }
-                if let Some(monitor) = &info.monitor { map.insert("monitor".to_string(), Value::String(monitor.to_owned())); }
-
-                map.insert("dynamic".to_string(), Value::Bool(false));
-                map.insert("exists".to_string(), Value::Bool(false));
-
-                Value::Object(map)
-            }).collect());
         }
 
         workspaces.sort_by(|w1, w2| {
