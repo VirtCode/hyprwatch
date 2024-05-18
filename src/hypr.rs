@@ -1,6 +1,7 @@
 use std::env;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use anyhow::Context;
 use serde_json::Value;
 
@@ -52,17 +53,16 @@ pub fn get_info(requests: Vec<String>) -> anyhow::Result<Vec<Value>>{
         .collect::<serde_json::Result<Vec<Value>>>().context("socket 1 did not return valid json")
 }
 
-/// Returns the path to the hyprland config file
-pub fn get_hypr_config() -> anyhow::Result<String> {
-    env::var("XDG_CONFIG_HOME")
-        .or_else(|_e| env::var("HOME").map(|s| s + "/.config"))
-        .map(|s| s + "/hypr/hyprland.conf").context("$HOME is not set, cannot find hyprland config")
-}
-
 /// Returns the path to a socket, based on its name (without . and ending) and the instance signature
 pub fn get_hypr_socket(name: &str) -> anyhow::Result<String> {
     let instance = env::var("HYPRLAND_INSTANCE_SIGNATURE").context("couldn't find instance singature, is hyprland running?")?;
 
-    Ok(format!("/tmp/hypr/{instance}/.{name}.sock"))
+    // use runtime dir or tmp if that doesn't exist
+    let mut dir = env::var("XDG_RUNTIME_DIR").context("couldn't get current runtime dir, are you running as a user?")? + "/hypr";
+    if !PathBuf::from(&dir).exists() {
+        dir = "/tmp/hypr".to_string();
+    }
+
+    Ok(format!("{dir}/{instance}/.{name}.sock"))
 }
 

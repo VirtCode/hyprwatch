@@ -8,7 +8,6 @@ The following features are currently implemented:
 - Listening to changes in `monitors`, `workspaces` or `clients`.
 - More attributes in `workspaces` like whether it is focused, shown on a monitor, or even exists.
 - The monitor name as an attribute in `clients`.
-- Loading empty workspaces from your Hyprland configuration and including them in `workspaces`.
 - Similar command syntax to `hyprctl`.
 - Future-proof and efficient usage of the two sockets.
 
