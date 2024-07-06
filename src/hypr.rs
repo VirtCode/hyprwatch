@@ -44,11 +44,8 @@ pub fn get_info(requests: Vec<String>) -> anyhow::Result<Vec<Value>>{
     let mut response = String::new();
     socket.read_to_string(&mut response).context("failed to read from socket 1")?;
 
-    // Response will be everything concatenated without any spaces, put DEL character between these so we can split by that
-    response = response.replace("][", "]\x7f[").replace("}[", "}\x7f[").replace("]{", "]\x7f{");
-
     // Now split by that inserted character
-    response.split('\x7f')
+    response.split("\n\n\n")
         .map(serde_json::from_str::<Value>)
         .collect::<serde_json::Result<Vec<Value>>>().context("socket 1 did not return valid json")
 }
